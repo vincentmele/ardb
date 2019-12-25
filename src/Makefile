@@ -40,7 +40,7 @@ uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 
 LIB_PATH=$(PWD)/../deps
 
-JEMALLOC_VER=5.1.0
+JEMALLOC_VER=5.2.1
 JEMALLOC_PATH=${LIB_PATH}/jemalloc-${JEMALLOC_VER}
 JEMALLOC_FILE=${JEMALLOC_PATH}.tar.bz2
 JEMALLOC_REMOTE_FILE=https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VER}/jemalloc-${JEMALLOC_VER}.tar.bz2
@@ -52,7 +52,7 @@ SNAPPY_FILE=${SNAPPY_PATH}.tar.gz
 SNAPPY_REMOTE_FILE=https://github.com/google/snappy/releases/download/${SNAPPY_VER}/snappy-${SNAPPY_VER}.tar.gz
 SNAPPY_LIBA=${SNAPPY_PATH}/.libs/libsnappy.a
 
-ROCKSDB_VER=5.14.2
+ROCKSDB_VER=6.5.2
 ROCKSDB_PATH=${LIB_PATH}/rocksdb-${ROCKSDB_VER}
 ROCKSDB_REMOTE_FILE=https://github.com/facebook/rocksdb/archive/v${ROCKSDB_VER}.tar.gz
 ROCKSDB_FILE=${ROCKSDB_PATH}.tar.gz
