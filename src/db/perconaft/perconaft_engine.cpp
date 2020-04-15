@@ -425,8 +425,9 @@ namespace ardb
         return err;
     }
 
-    bool PerconaFTEngine::Exists(Context& ctx, const KeyObject& key,ValueObject& val)
+    bool PerconaFTEngine::Exists(Context& ctx, const KeyObject& key)
     {
+        ValueObject val;
         return Get(ctx, key, val) == 0;
     }
 

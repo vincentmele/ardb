@@ -107,7 +107,7 @@ OP_NAMESPACE_BEGIN
             }
             meta.SetType(KEY_HASH);
             meta.SetObjectLen(-1);
-            //meta.SetTTL(meta.GetTTL()); //clear ttl setting
+            meta.SetTTL(0); //clear ttl setting
             SetKeyValue(ctx, key, meta);
 
             for (size_t i = 1; i < cmd.GetArguments().size(); i += 2)
@@ -172,7 +172,7 @@ OP_NAMESPACE_BEGIN
                 }
                 meta.SetType(KEY_HASH);
                 meta.SetObjectLen(-1);
-                //meta.SetTTL(0); //clear ttl setting
+                meta.SetTTL(0); //clear ttl setting
                 SetKeyValue(ctx, key, meta);
             }
             if (0 != ctx.transc_err)
@@ -219,7 +219,7 @@ OP_NAMESPACE_BEGIN
         }
         if (0 == err)
         {
-            //vals[0].SetTTL(0);
+            vals[0].SetTTL(0);
             {
                 WriteBatchGuard batch(ctx, m_engine);
                 for (size_t i = 0; i < keys.size(); i++)
@@ -268,16 +268,13 @@ OP_NAMESPACE_BEGIN
             {
                 if (field.GetType() == KEY_META && field.GetKey() == key.GetKey())
                 {
+
                     ValueObject& meta = iter->Value();
-                    if (!CheckMeta(ctx, key, KEY_HASH, meta))
+
+                    if (meta.GetType() != KEY_HASH)
                     {
-                    	DELETE(iter);
-                        return 0;
-                    }
-                    if (meta.GetType() == 0)
-                    {
-                    	DELETE(iter);
-                        return 0;
+                        reply.SetErrCode(ERR_WRONG_TYPE);
+                        break;
                     }
                     checked_meta = true;
                     iter->Next();
@@ -642,8 +639,7 @@ OP_NAMESPACE_BEGIN
         const std::string& keystr = cmd.GetArguments()[0];
         KeyObject key(ctx.ns, KEY_HASH_FIELD, keystr);
         key.SetHashField(cmd.GetArguments()[1]);
-        ValueObject tmp;
-        bool existed = m_engine->Exists(ctx, key,tmp);
+        bool existed = m_engine->Exists(ctx, key);
         reply.SetInteger(existed ? 1 : 0);
         return 0;
     }
@@ -704,8 +700,7 @@ OP_NAMESPACE_BEGIN
             {
                 KeyObject field(ctx.ns, KEY_HASH_FIELD, keystr);
                 field.SetHashField(cmd.GetArguments()[i]);
-                ValueObject tmp;
-                if (m_engine->Exists(ctx, field,tmp))
+                if (m_engine->Exists(ctx, field))
                 {
                     RemoveKey(ctx, field);
                     del_num++;

@@ -420,7 +420,7 @@ OP_NAMESPACE_BEGIN
                     SetKeyValue(ctx, ele, ele_value);
                     meta.SetObjectLen(meta.GetObjectLen() + 1);
                 }
-                //meta.SetTTL(0); //clear ttl setting
+                meta.SetTTL(0); //clear ttl setting
                 SetKeyValue(ctx, key, meta);
             }
             err = ctx.transc_err;
@@ -432,7 +432,7 @@ OP_NAMESPACE_BEGIN
         else
         {
             reply.SetInteger(meta.GetObjectLen());
-            SignalKeyAsReady(ctx, keystr);
+            SignalListAsReady(ctx, keystr);
         }
         return 0;
     }
@@ -474,7 +474,7 @@ OP_NAMESPACE_BEGIN
             return 0;
         }
         if (end >= meta.GetObjectLen()) end = meta.GetObjectLen() - 1;
-        //int64_t rangelen = (end - start) + 1;
+        int64_t rangelen = (end - start) + 1;
         reply.ReserveMember(0);
 
         KeyObject ele_key(ctx.ns, KEY_LIST_ELEMENT, cmd.GetArguments()[0]);
@@ -523,7 +523,7 @@ OP_NAMESPACE_BEGIN
             reply.SetErrCode(ERR_INVALID_INTEGER_ARGS);
             return 0;
         }
-        //int64 toremove = std::abs(count);
+        int64 toremove = std::abs(count);
         KeyObject key(ctx.ns, KEY_META, cmd.GetArguments()[0]);
         ValueObject meta;
         KeyLockGuard guard(ctx, key);
@@ -957,8 +957,7 @@ OP_NAMESPACE_BEGIN
             list_keys.push_back(cmd.GetArguments()[i]);
         }
         reply.type = 0; //wait
-        AnyArray empty;
-        BlockForKeys(ctx, list_keys,empty, KEY_LIST, timeout * 1000);
+        BlockForKeys(ctx, list_keys, "", timeout);
         return 0;
     }
     int Ardb::BRPop(Context& ctx, RedisCommandFrame& cmd)
@@ -978,13 +977,126 @@ OP_NAMESPACE_BEGIN
         if (reply.IsNil())
         {
             StringArray list_keys(1, cmd.GetArguments()[0]);
-            AnyArray empty;
-            BlockForKeys(ctx, list_keys, empty, KEY_LIST, timeout * 1000);
-            KeyPrefix& bkey = ctx.GetBPop().GetListTarget().target;
-            bkey.ns = ctx.ns;
-            bkey.key.SetString(cmd.GetArguments()[1], false);
+            BlockForKeys(ctx, list_keys, cmd.GetArguments()[1], timeout);
             reply.type = 0;
         }
+        return 0;
+    }
+
+    struct ContexWithReply
+    {
+            Context* ctx;
+            RedisReply* reply;
+            ContexWithReply(Context* c, RedisReply* r)
+                    : ctx(c), reply(r)
+            {
+            }
+            ~ContexWithReply()
+            {
+                DELETE(reply);
+            }
+    };
+
+    void Ardb::AsyncUnblockKeysCallback(Channel* ch, void * data)
+    {
+        ContexWithReply* c = (ContexWithReply*) data;
+        if (NULL == ch || ch->IsClosed())
+        {
+            DELETE(c);
+            return;
+        }
+        g_db->UnblockKeys(*(c->ctx), true, c->reply);
+        DELETE(c);
+    }
+
+    int Ardb::UnblockKeys(Context& ctx, bool sync, RedisReply* reply)
+    {
+        if (ctx.keyslocked)
+        {
+            FATAL_LOG("Can not modify block dataset when key locked.");
+        }
+        if (!sync)
+        {
+            ctx.client->client->GetService().AsyncIO(ctx.client->client->GetID(), AsyncUnblockKeysCallback, new ContexWithReply(&ctx, reply));
+            return 0;
+        }
+        if(NULL != reply)
+        {
+            Channel* ch = ctx.client->client;
+            ch->Write(*reply);
+        }
+        LockGuard<SpinMutexLock> guard(m_block_keys_lock, true);
+        if (ctx.bpop != NULL && !m_blocked_ctxs.empty())
+        {
+            BlockingState::BlockKeySet::iterator it = ctx.GetBPop().keys.begin();
+            while (it != ctx.GetBPop().keys.end())
+            {
+                const KeyPrefix& prefix = *it;
+                BlockedContextTable::iterator blocked_found = m_blocked_ctxs.find(prefix);
+                if (blocked_found != m_blocked_ctxs.end())
+                {
+                    ContextSet& blocked_set = blocked_found->second;
+                    blocked_set.erase(&ctx);
+                    if (blocked_set.empty())
+                    {
+                        m_blocked_ctxs.erase(blocked_found);
+                    }
+                }
+                it++;
+            }
+            ctx.ClearBPop();
+        }
+        ctx.client->client->UnblockRead();
+        return 0;
+    }
+
+    int Ardb::BlockForKeys(Context& ctx, const StringArray& keys, const std::string& target, uint32 timeout)
+    {
+        if (ctx.keyslocked)
+        {
+            FATAL_LOG("Can not modify block dataset when key locked.");
+        }
+        if (!target.empty())
+        {
+            ctx.GetBPop().target.key.SetString(target, false);
+            ctx.GetBPop().target.ns = ctx.ns;
+        }
+        if (timeout > 0)
+        {
+            ctx.GetBPop().timeout = (uint64) timeout * 1000 * 1000 + get_current_epoch_micros();
+        }
+        ctx.client->client->BlockRead();
+        LockGuard<SpinMutexLock> guard(m_block_keys_lock);
+        for (size_t i = 0; i < keys.size(); i++)
+        {
+            KeyPrefix prefix;
+            prefix.ns = ctx.ns;
+            prefix.key.SetString(keys[i], false);
+            ctx.GetBPop().keys.insert(prefix);
+            m_blocked_ctxs[prefix].insert(&ctx);
+        }
+        return 0;
+    }
+
+    int Ardb::SignalListAsReady(Context& ctx, const std::string& key)
+    {
+        if (ctx.keyslocked)
+        {
+            FATAL_LOG("Can not modify block dataset when key locked.");
+        }
+        LockGuard<SpinMutexLock> guard(m_block_keys_lock, !ctx.flags.block_keys_locked);
+        KeyPrefix prefix;
+        prefix.ns = ctx.ns;
+        prefix.key.SetString(key, false);
+        if (m_blocked_ctxs.find(prefix) == m_blocked_ctxs.end())
+        {
+            return -1;
+        }
+        if (NULL == m_ready_keys)
+        {
+            NEW(m_ready_keys, ReadyKeySet);
+        }
+        m_ready_keys->insert(prefix);
         return 0;
     }
 
@@ -1017,10 +1129,10 @@ OP_NAMESPACE_BEGIN
             push_cmd.SetCommand("rpush");
             push_cmd.SetType(REDIS_CMD_RPUSH);
         }
-        push_cmd.AddArg(key.key.AsString());
+        push_cmd.AddArg(ctx.GetBPop().target.key.AsString());
         push_cmd.AddArg(value);
         Context tmpctx;
-        tmpctx.ns = key.ns;
+        tmpctx.ns = ctx.GetBPop().target.ns;
         tmpctx.flags.block_keys_locked = ctx.flags.block_keys_locked;
         ListPush(tmpctx, push_cmd, true);
         if (tmpctx.GetReply().IsErr())
@@ -1063,55 +1175,98 @@ OP_NAMESPACE_BEGIN
         }
     }
 
-    int Ardb::WakeClientsBlockingOnList(Context& ctx, const KeyPrefix& ready_key, Context& unblock_client)
+    int Ardb::WakeClientsBlockingOnList(Context& ctx)
     {
-        std::string pop_value;
-        RedisCommandFrame list_pop;
-        int err = 0;
-        err = ListPopValue(ctx, ready_key, unblock_client.last_cmdtype == REDIS_CMD_BLPOP, pop_value, list_pop);
-        if (0 == err)
+        if (NULL == m_ready_keys)
         {
-            if (NULL != unblock_client.GetBPop().list_target)
+            return 0;
+        }
+        ReadyKeySet ready_keys;
+        {
+            LockGuard<SpinMutexLock> guard(m_block_keys_lock);
+            if (NULL == m_ready_keys)
             {
-                RedisCommandFrame list_push;
-                err = ListPushValue(ctx, unblock_client.GetBPop().list_target->target, pop_value, true, list_push);
-                if (0 != err)
+                return 0;
+            }
+            if (m_ready_keys->empty())
+            {
+                return 0;
+            }
+            ready_keys = *m_ready_keys;
+            DELETE(m_ready_keys);
+        }
+        ReadyKeySet::iterator sit = ready_keys.begin();
+        while (sit != ready_keys.end())
+        {
+            const KeyPrefix& ready_key = *sit;
+            {
+                LockGuard<SpinMutexLock> block_guard(m_block_keys_lock);
+                BlockedContextTable::iterator fit = m_blocked_ctxs.find(ready_key);
+                if (fit != m_blocked_ctxs.end())
                 {
-                    /*
-                     * repush value into old list
-                     */
-                    RedisCommandFrame list_repush;
-                    ListPushValue(ctx, ready_key, pop_value, unblock_client.last_cmdtype == REDIS_CMD_BLPOP,
-                            list_repush);
-                }
-                else
-                {
-                    /*
-                     * generate 'lpop/rpop' for replication in master
-                     */
-                    if (GetConf().master_host.empty())
+                    ContextSet& wait_set = fit->second;
+                    ContextSet::iterator cit = wait_set.begin();
+                    while (cit != wait_set.end())
                     {
-                        FeedReplicationBacklog(ctx, ready_key.ns, list_pop);
-                        FeedReplicationBacklog(ctx, ready_key.ns, list_push);
+                        Context* unblock_client = *cit;
+                        std::string pop_value;
+                        RedisCommandFrame list_pop;
+                        int err = 0;
+                        err = ListPopValue(ctx, ready_key, unblock_client->last_cmdtype == REDIS_CMD_BLPOP, pop_value,
+                                list_pop);
+                        if (0 == err)
+                        {
+                            if (!unblock_client->GetBPop().target.IsNil())
+                            {
+                                RedisCommandFrame list_push;
+                                err = ListPushValue(ctx, unblock_client->GetBPop().target, pop_value, true, list_push);
+                                if (0 != err)
+                                {
+                                    /*
+                                     * repush value into old list
+                                     */
+                                    RedisCommandFrame list_repush;
+                                    ListPushValue(ctx, ready_key, pop_value,
+                                            unblock_client->last_cmdtype == REDIS_CMD_BLPOP, list_repush);
+                                }
+                                else
+                                {
+                                    /*
+                                     * generate 'lpop/rpop' for replication in master
+                                     */
+                                    if (GetConf().master_host.empty())
+                                    {
+                                        FeedReplicationBacklog(ctx, ready_key.ns, list_pop);
+                                        FeedReplicationBacklog(ctx, ready_key.ns, list_push);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                /*
+                                 * generate 'lpop/rpop' for replication in master
+                                 */
+                                if (GetConf().master_host.empty())
+                                {
+                                    FeedReplicationBacklog(ctx, ready_key.ns, list_pop);
+                                }
+                            }
+                        }
+                        if (0 == err)
+                        {
+                            cit = wait_set.erase(cit);
+                            ServeClientBlockedOnList(*unblock_client, ready_key, pop_value);
+                        }
+                        else
+                        {
+                            cit++;
+                        }
                     }
                 }
             }
-            else
-            {
-                /*
-                 * generate 'lpop/rpop' for replication in master
-                 */
-                if (GetConf().master_host.empty())
-                {
-                    FeedReplicationBacklog(ctx, ready_key.ns, list_pop);
-                }
-            }
+            sit++;
         }
-        if (0 == err)
-        {
-            ServeClientBlockedOnList(unblock_client, ready_key, pop_value);
-        }
-        return err;
+        return 0;
     }
 
 OP_NAMESPACE_END

@@ -56,7 +56,7 @@ namespace ardb
             {
                 char logbuf[1024];
                 int len = vsnprintf(logbuf, sizeof(logbuf), format, ap);
-                if ((size_t)len < sizeof(logbuf))
+                if (len < sizeof(logbuf))
                 {
                     INFO_LOG(logbuf);
                 }
@@ -526,8 +526,9 @@ namespace ardb
         return err;
     }
 
-    bool LevelDBEngine::Exists(Context& ctx, const KeyObject& key,ValueObject& val)
+    bool LevelDBEngine::Exists(Context& ctx, const KeyObject& key)
     {
+        ValueObject val;
         return Get(ctx, key, val) == 0;
     }
 

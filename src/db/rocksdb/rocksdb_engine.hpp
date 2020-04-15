@@ -49,7 +49,7 @@
 
 OP_NAMESPACE_BEGIN
 
-    struct RocksIterData;
+    class RocksIterData;
     class RocksDBEngine;
     class RocksDBIterator: public Iterator
     {
@@ -131,7 +131,7 @@ OP_NAMESPACE_BEGIN
             int DelKey(Context& ctx, const rocksdb::Slice& key);
             int DelRange(Context& ctx, const KeyObject& start, const KeyObject& end);
             int Merge(Context& ctx, const KeyObject& key, uint16_t op, const DataArray& args);
-            bool Exists(Context& ctx, const KeyObject& key,ValueObject& val);
+            bool Exists(Context& ctx, const KeyObject& key);
             int BeginWriteBatch(Context& ctx);
             int CommitWriteBatch(Context& ctx);
             int DiscardWriteBatch(Context& ctx);

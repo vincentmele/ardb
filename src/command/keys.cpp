@@ -499,8 +499,7 @@ OP_NAMESPACE_BEGIN
         KeyObject src(srcdb, KEY_META, srckey);
         KeyObject dst(dstdb, KEY_META, dstkey);
         KeysLockGuard guard(ctx, src, dst);
-        ValueObject dst_val;
-        if (m_engine->Exists(ctx, dst,dst_val))
+        if (m_engine->Exists(ctx, dst))
         {
             if (nx)
             {
@@ -592,11 +591,6 @@ OP_NAMESPACE_BEGIN
             case KEY_STRING:
             {
                 reply.SetStatusString("string");
-                break;
-            }
-            case KEY_STREAM:
-            {
-                reply.SetStatusString("stream");
                 break;
             }
             default:
@@ -692,8 +686,7 @@ OP_NAMESPACE_BEGIN
          * (possibly in the past) and wait for an explicit DEL from the master. */
         if (now > mills && GetConf().master_host.empty() && !IsLoadingData() && cmd.GetType() != REDIS_CMD_PERSIST)
         {
-        	ValueObject tmp;
-            if ((!ctx.flags.redis_compatible && m_engine->GetFeatureSet().support_merge) || m_engine->Exists(ctx, key,tmp))
+            if ((!ctx.flags.redis_compatible && m_engine->GetFeatureSet().support_merge) || m_engine->Exists(ctx, key))
             {
                 DelKey(ctx, key);
                 RedisCommandFrame del("del");
@@ -838,17 +831,7 @@ OP_NAMESPACE_BEGIN
         RedisReply& reply = ctx.GetReply();
         const std::string& keystr = cmd.GetArguments()[0];
         KeyObject key(ctx.ns, KEY_META, keystr);
-        ValueObject val;
-        bool existed = m_engine->Exists(ctx, key,val);
-        if(existed)
-        {
-        	bool expired;
-        	CheckMeta(ctx, key, KEY_UNKNOWN, val, false, &expired);
-        	if(expired)
-        	{
-        		existed = false;
-        	}
-        }
+        bool existed = m_engine->Exists(ctx, key);
         reply.SetInteger(existed ? 1 : 0);
         return 0;
     }
@@ -932,30 +915,13 @@ OP_NAMESPACE_BEGIN
                 iter->Next();
             }
         }
-        if(meta_obj.GetType() == KEY_STREAM)
-        {
-            StreamDel(ctx, meta_key);
-        }
+
         if (removed > 0)
         {
             TouchWatchKey(ctx, meta_key);
             ctx.dirty++;
         }
         return removed;
-    }
-
-    int Ardb::Unlink(Context& ctx, RedisCommandFrame& cmd)
-    {
-        RedisReply& reply = ctx.GetReply();
-        int removed = 0;
-
-        for (size_t i = 0; i < cmd.GetArguments().size(); i++)
-        {
-        	AsyncDeleteKey(ctx, ctx.ns, cmd.GetArguments()[i]);
-            removed++;
-        }
-        reply.SetInteger(removed);
-        return 0;
     }
 
     int Ardb::Del(Context& ctx, RedisCommandFrame& cmd)
@@ -1027,8 +993,7 @@ OP_NAMESPACE_BEGIN
         KeyLockGuard guard(ctx, meta);
         if (!replace)
         {
-        	ValueObject meta_val;
-            if (m_engine->Exists(ctx, meta,meta_val))
+            if (m_engine->Exists(ctx, meta))
             {
                 reply.SetErrorReason("-BUSYKEY Target key name already exists.");
                 return 0;

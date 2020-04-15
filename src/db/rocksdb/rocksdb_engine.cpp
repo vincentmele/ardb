@@ -218,14 +218,10 @@ OP_NAMESPACE_BEGIN
                     char* buffer = NULL;
                     size_t buf_len = 1024;
                     NEW(buffer, char[buf_len]);
-                    if(NULL == buffer)
-                    {
-                        return;
-                    }
                     int n = vsnprintf(buffer, buf_len - 1, format, ap);
                     if (n > 0 && NULL != buffer)
                     {
-                        if ((size_t)n < buf_len)
+                        if (n < buf_len)
                         {
                             buffer[n] = 0;
                         }
@@ -421,7 +417,7 @@ OP_NAMESPACE_BEGIN
                     {
                         return false;
                     }
-                    if (meta.GetTTL() > 0 && meta.GetTTL() <= (int64_t)get_current_epoch_millis())
+                    if (meta.GetTTL() > 0 && meta.GetTTL() <= get_current_epoch_millis())
                     {
                         g_db->AddExpiredKey(ns, k.GetKey());
                         return false;
@@ -914,7 +910,7 @@ OP_NAMESPACE_BEGIN
         }
 
         rocksdb::ReadOptions opt;
-        opt.fill_cache = g_db->GetConf().rocksdb_read_fill_cache;
+        //opt.snapshot = rocks_ctx.PeekSnapshot();
         std::vector<rocksdb::Status> ss = m_db->MultiGet(opt, cfs, ks, &vs);
 
         for (size_t i = 0; i < ss.size(); i++)
@@ -938,7 +934,7 @@ OP_NAMESPACE_BEGIN
         }
         RocksDBLocalContext& rocks_ctx = g_rocks_context.GetValue();
         rocksdb::ReadOptions opt;
-        opt.fill_cache = g_db->GetConf().rocksdb_read_fill_cache;
+        //opt.snapshot = rocks_ctx.PeekSnapshot();
         std::string& valstr = rocks_ctx.GetStringCache();
         Buffer& key_encode_buffer = rocks_ctx.GetEncodeBuferCache();
         rocksdb::Slice key_slice = to_rocksdb_slice(key.Encode(key_encode_buffer));
@@ -1056,7 +1052,7 @@ OP_NAMESPACE_BEGIN
         return rocksdb_err(s);
     }
 
-    bool RocksDBEngine::Exists(Context& ctx, const KeyObject& key,ValueObject& val)
+    bool RocksDBEngine::Exists(Context& ctx, const KeyObject& key)
     {
         ColumnFamilyHandlePtr cfp = GetColumnFamilyHandle(ctx, key.GetNameSpace(), false);
         rocksdb::ColumnFamilyHandle* cf = cfp.get();
@@ -1066,12 +1062,11 @@ OP_NAMESPACE_BEGIN
         }
         RocksDBLocalContext& rocks_ctx = g_rocks_context.GetValue();
         rocksdb::ReadOptions opt;
-        opt.fill_cache = g_db->GetConf().rocksdb_read_fill_cache;
+        //opt.snapshot = rocks_ctx.PeekSnapshot();
         Buffer& key_encode_buffer = rocks_ctx.GetEncodeBuferCache();
         std::string& tmp = rocks_ctx.GetStringCache();
         rocksdb::Slice k = to_rocksdb_slice(key.Encode(key_encode_buffer));
-        bool value_found  = false;
-        bool exist = m_db->KeyMayExist(opt, cf, k, &tmp, &value_found);
+        bool exist = m_db->KeyMayExist(opt, cf, k, &tmp, NULL);
         if (!exist)
         {
             return false;
@@ -1080,20 +1075,14 @@ OP_NAMESPACE_BEGIN
         {
             return exist;
         }
-        if(value_found)
-        {
-            Buffer valBuffer(const_cast<char*>(tmp.data()), 0, tmp.size());
-            val.Decode(valBuffer, true);
-            return true;
-        }
-        return 0 == Get(ctx, key, val);
+        return m_db->Get(opt, cf, k, &tmp).ok();
     }
 
     Iterator* RocksDBEngine::Find(Context& ctx, const KeyObject& key)
     {
         rocksdb::ReadOptions opt;
         opt.snapshot = (const rocksdb::Snapshot*) ctx.engine_snapshot;
-        opt.fill_cache = g_db->GetConf().rocksdb_iter_fill_cache;
+        //opt.snapshot = GetSnpashot();
         RocksDBIterator* iter = NULL;
         ColumnFamilyHandlePtr cfp = GetColumnFamilyHandle(ctx, key.GetNameSpace(), false);
         rocksdb::ColumnFamilyHandle* cf = cfp.get();

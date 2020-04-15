@@ -135,7 +135,7 @@ OP_NAMESPACE_BEGIN
             sprintf(config_key, "server[%d].qps-limit", i);
             conf_get_int64(props, config_key, lp.qps_limit);
             sprintf(config_key, "server[%d].unixsocketperm", i);
-            conf_get_int64(props, config_key, lp.unixsocketperm);
+            conf_get_int64(props, config_key, lp.qps_limit);
             servers.push_back(lp);
         }
 
@@ -295,10 +295,6 @@ OP_NAMESPACE_BEGIN
         conf_get_int64(props, "qps-limit-per-host", qps_limit_per_host);
         conf_get_int64(props, "qps-limit-per-connection", qps_limit_per_connection);
         conf_get_int64(props, "range-delete-min-size", range_delete_min_size);
-        conf_get_int64(props, "stream-lru-cache-size", stream_lru_cache_size);
-
-        conf_get_bool(props, "rocksdb.read_fill_cache", rocksdb_read_fill_cache);
-        conf_get_bool(props, "rocksdb.iter_fill_cache", rocksdb_iter_fill_cache);
 
         //trusted_ip.clear();
         Properties::const_iterator ip_it = props.find("trusted-ip");

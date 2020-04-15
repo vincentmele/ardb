@@ -88,7 +88,7 @@ namespace ardb
             {
                 return FDB_CS_KEEP_DOC;
             }
-            if (meta.GetTTL() > 0 && meta.GetTTL() <= (int64_t)get_current_epoch_millis())
+            if (meta.GetTTL() > 0 && meta.GetTTL() <= get_current_epoch_millis())
             {
                 if (meta.GetType() != KEY_STRING)
                 {
@@ -514,8 +514,9 @@ namespace ardb
         return err;
     }
 
-    bool ForestDBEngine::Exists(Context& ctx, const KeyObject& key,ValueObject& val)
+    bool ForestDBEngine::Exists(Context& ctx, const KeyObject& key)
     {
+        ValueObject val;
         return Get(ctx, key, val) == 0;
     }
 
@@ -536,7 +537,7 @@ namespace ardb
     }
     int ForestDBEngine::Compact(Context& ctx, const KeyObject& start, const KeyObject& end)
     {
-        //ForestDBLocalContext& local_ctx = GetDBLocalContext();
+        ForestDBLocalContext& local_ctx = GetDBLocalContext();
         //fdb_compact_upto();
         return ERR_NOTSUPPORTED;
     }

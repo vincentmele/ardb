@@ -36,8 +36,27 @@
 #include "db.hpp"
 #include "repl/repl.hpp"
 #include "statistics.hpp"
-#include "db/engine_factory.hpp"
-
+#if defined __USE_LMDB__
+#include "lmdb/lmdb_engine.hpp"
+const char* ardb::g_engine_name = "lmdb";
+#elif defined __USE_ROCKSDB__
+#include "rocksdb/rocksdb_engine.hpp"
+const char* ardb::g_engine_name ="rocksdb";
+#elif defined __USE_FORESTDB__
+#include "forestdb/forestdb_engine.hpp"
+const char* ardb::g_engine_name ="forestdb";
+#elif defined __USE_LEVELDB__
+#include "leveldb/leveldb_engine.hpp"
+const char* ardb::g_engine_name = "leveldb";
+#elif defined __USE_WIREDTIGER__
+#include "wiredtiger/wiredtiger_engine.hpp"
+const char* ardb::g_engine_name ="wiredtiger";
+#elif defined __USE_PERCONAFT__
+#include "perconaft/perconaft_engine.hpp"
+const char* ardb::g_engine_name ="perconaft";
+#else
+const char* ardb::g_engine_name = "unknown";
+#endif
 
 /* Command flags. Please check the command table defined in the redis.c file
  * for more information about the meaning of every flag. */
@@ -143,7 +162,7 @@ OP_NAMESPACE_BEGIN
                     0), m_write_caller_num(0), m_db_caller_num(0), m_redis_cursor_seed(0), m_watched_ctxs(NULL), m_ready_keys(
                     NULL), m_monitors(
             NULL), m_restoring_nss(
-            NULL), m_min_ttl(-1),g_background(NULL)
+            NULL), m_min_ttl(-1)
     {
         g_db = this;
         m_settings.set_empty_key("");
@@ -151,7 +170,7 @@ OP_NAMESPACE_BEGIN
 
         struct RedisCommandHandlerSetting settingTable[] =
         {
-        { "ping", REDIS_CMD_PING, &Ardb::Ping, 0, 1, "rtF", 0, 0, 0 },
+        { "ping", REDIS_CMD_PING, &Ardb::Ping, 0, 0, "rtF", 0, 0, 0 },
         { "multi", REDIS_CMD_MULTI, &Ardb::Multi, 0, 0, "rsF", 0, 0, 0 },
         { "discard", REDIS_CMD_DISCARD, &Ardb::Discard, 0, 0, "rsF", 0, 0, 0 },
         { "exec", REDIS_CMD_EXEC, &Ardb::Exec, 0, 0, "sM", 0, 0, 0 },
@@ -191,7 +210,6 @@ OP_NAMESPACE_BEGIN
         { "set", REDIS_CMD_SET, &Ardb::Set, 2, 7, "w", 0, 0, 0 },
         { "set2", REDIS_CMD_SET2, &Ardb::Set, 2, 7, "w", 0, 0, 0 },
         { "del", REDIS_CMD_DEL, &Ardb::Del, 1, -1, "w", 0, 0, 0 },
-		{ "unlink", REDIS_CMD_UNLINK, &Ardb::Unlink, 1, -1, "w", 0, 0, 0 },
         { "exists", REDIS_CMD_EXISTS, &Ardb::Exists, 1, 1, "r", 0, 0, 0 },
         { "expire", REDIS_CMD_EXPIRE, &Ardb::Expire, 2, 2, "w", 0, 0, 0 },
         { "pexpire", REDIS_CMD_PEXPIRE, &Ardb::PExpire, 2, 2, "w", 0, 0, 0 },
@@ -292,10 +310,6 @@ OP_NAMESPACE_BEGIN
         { "zrangebylex", REDIS_CMD_ZRANGEBYLEX, &Ardb::ZRangeByLex, 3, 6, "r", 0, 0, 0 },
         { "zrevrangebylex", REDIS_CMD_ZREVRANGEBYLEX, &Ardb::ZRangeByLex, 3, 6, "r", 0, 0, 0 },
         { "zremrangebylex", REDIS_CMD_ZREMRANGEBYLEX, &Ardb::ZRemRangeByLex, 3, 3, "w", 0, 0, 0 },
-        { "zpopmin", REDIS_CMD_ZPOPMIN, &Ardb::ZPopMin, 1, 2, "w", 0, 0, 0 },
-        { "zpopmax", REDIS_CMD_ZPOPMAX, &Ardb::ZPopMax, 1, 2, "w", 0, 0, 0 },
-        { "bzpopmin", REDIS_CMD_BZPOPMIN, &Ardb::BZPopMin, 2, -1, "w", 0, 0, 0 },
-        { "bzpopmax", REDIS_CMD_BZPOPMAX, &Ardb::BZPopMax, 2, -1, "w", 0, 0, 0 },
         { "lindex", REDIS_CMD_LINDEX, &Ardb::LIndex, 2, 2, "r", 0, 0, 0 },
         { "linsert", REDIS_CMD_LINSERT, &Ardb::LInsert, 4, 4, "w", 0, 0, 0 },
         { "llen", REDIS_CMD_LLEN, &Ardb::LLen, 1, 1, "r", 0, 0, 0 },
@@ -345,21 +359,7 @@ OP_NAMESPACE_BEGIN
         { "monitor", REDIS_CMD_MONITOR, &Ardb::Monitor, 0, 0, "ars", 0, 0, 0 },
         { "debug", REDIS_CMD_DEBUG, &Ardb::Debug, 2, -1, "ars", 0, 0, 0 },
         { "touch", REDIS_CMD_TOUCH, &Ardb::Touch, 1, -2, "rF", 0, 0, 0 },
-		{ "command", REDIS_CMD_COMMAND, &Ardb::Command, 0, -1, "r", 0, 0, 0 },
-		{ "xread", REDIS_CMD_XREAD, &Ardb::XRead, 2, -1, "r", 0, 0, 0 },
-		{ "xreadgroup", REDIS_CMD_XREAD, &Ardb::XRead, 5, -1, "rw", 0, 0, 0 },
-		{ "xadd", REDIS_CMD_XADD, &Ardb::XAdd, 4, -1, "w", 0, 0, 0 },
-		{ "xlen", REDIS_CMD_XLEN, &Ardb::XLen, 1, 1, "r", 0, 0, 0 },
-		{ "xpending", REDIS_CMD_XPENDING, &Ardb::XPending, 2, 6, "r", 0, 0, 0 },
-		{ "xrange", REDIS_CMD_XRANGE, &Ardb::XRange, 3, 5, "r", 0, 0, 0 },
-		{ "xrevrange", REDIS_CMD_XREVRANGE, &Ardb::XRevRange, 3, 5, "r", 0, 0, 0 },
-		{ "xack", REDIS_CMD_XACK, &Ardb::XACK, 3, -1, "w", 0, 0, 0 },
-		{ "xclaim", REDIS_CMD_XCLAIM, &Ardb::XClaim, 5, -1, "w", 0, 0, 0 },
-		{ "xinfo", REDIS_CMD_XINFO, &Ardb::XInfo, 1, 3, "r", 0, 0, 0 },
-		{ "xgroup", REDIS_CMD_XGROUP, &Ardb::XGroup, 1, 4, "w", 0, 0, 0 },
-		{ "xtrim", REDIS_CMD_XTRIM, &Ardb::XTrim, 4, -1, "w", 0, 0, 0 },
-		{ "xdel", REDIS_CMD_XDEL, &Ardb::XDel, 2, -1, "w", 0, 0, 0 },
-        };
+		{ "command", REDIS_CMD_COMMAND, &Ardb::Command, 0, -1, "r", 0, 0, 0 },};
 
         CostRanges cmdstat_ranges;
         cmdstat_ranges.push_back(CostRange(0, 1000));
@@ -436,7 +436,6 @@ OP_NAMESPACE_BEGIN
 
     Ardb::~Ardb()
     {
-    	StopBackGroundThread();
         DELETE(m_engine);
         DELETE(m_ready_keys);
         DELETE(m_watched_ctxs);
@@ -471,7 +470,27 @@ OP_NAMESPACE_BEGIN
         return 0;
     }
 
-
+    static Engine* create_engine()
+    {
+        Engine* engine = NULL;
+#if defined __USE_LMDB__
+        NEW(engine, LMDBEngine);
+#elif defined __USE_ROCKSDB__
+        NEW(engine, RocksDBEngine);
+#elif defined __USE_LEVELDB__
+        NEW(engine, LevelDBEngine);
+#elif defined __USE_FORESTDB__
+        NEW(engine, ForestDBEngine);
+#elif defined __USE_WIREDTIGER__
+        NEW(engine, WiredTigerEngine);
+#elif defined __USE_PERCONAFT__
+        NEW(engine, PerconaFTEngine);
+#else
+        ERROR_LOG("Unsupported storage engine specified at compile time.");
+        return NULL;
+#endif
+        return engine;
+    }
 
     uint32 Ardb::MaxOpenFiles()
     {
@@ -521,7 +540,7 @@ OP_NAMESPACE_BEGIN
             std::string content = tmp;
             file_write_content(m_conf.pidfile, content);
         }
-        if(chdir(GetConf().home.c_str())){}
+        chdir(GetConf().home.c_str());
         ArdbLogger::InitDefaultLogger(m_conf.loglevel, m_conf.logfile);
 
         std::string dbdir = GetConf().data_base_path + "/" + g_engine_name;
@@ -545,7 +564,6 @@ OP_NAMESPACE_BEGIN
         }
         m_starttime = time(NULL);
         g_engine = m_engine;
-        CreateBackGroundThread();
         INFO_LOG("Ardb init engine:%s success.", g_engine_name);
         return 0;
     }
@@ -800,7 +818,7 @@ OP_NAMESPACE_BEGIN
                 locked_keys.push_back(*kit);
                 kit++;
             }
-            if(locked_keys.size() == (size_t)ks.size())
+            if(locked_keys.size() == ks.size())
             {
                 return;
             }
@@ -933,9 +951,9 @@ OP_NAMESPACE_BEGIN
         uint64 start_time = get_current_epoch_millis();
         while (iter->Valid() && scaned_keys < max_scan_keys_one_iter)
         {
-            KeyObject& k = iter->Key(true);
+            KeyObject& k = iter->Key(false);
             m_min_ttl = k.GetTTL();
-            if (k.GetTTL() > (int64_t)get_current_epoch_millis())
+            if (k.GetTTL() > get_current_epoch_millis())
             {
                 break;
             }
@@ -973,10 +991,6 @@ OP_NAMESPACE_BEGIN
         {
             INFO_LOG("Cost %llums to delete %u keys.", (end_time - start_time), total_expired_keys);
         }
-    }
-    void Ardb::GC()
-    {
-        ClearRetiredStreamCache();
     }
 
     int64 Ardb::ScanExpiredKeys()
@@ -1126,10 +1140,10 @@ OP_NAMESPACE_BEGIN
     bool Ardb::CheckMeta(Context& ctx, const std::string& key, KeyType expected, ValueObject& meta_value)
     {
         KeyObject meta_key(ctx.ns, KEY_META, key);
-        return CheckMeta(ctx, meta_key, expected, meta_value, true, NULL);
+        return CheckMeta(ctx, meta_key, expected, meta_value);
     }
 
-    bool Ardb::CheckMeta(Context& ctx, const KeyObject& key, KeyType expected, ValueObject& meta, bool fetch, bool* expired)
+    bool Ardb::CheckMeta(Context& ctx, const KeyObject& key, KeyType expected, ValueObject& meta, bool fetch)
     {
         RedisReply& reply = ctx.GetReply();
         int err = 0;
@@ -1149,7 +1163,7 @@ OP_NAMESPACE_BEGIN
                 reply.SetErrCode(ERR_WRONG_TYPE);
                 return false;
             }
-            if (meta.GetTTL() > 0 && meta.GetTTL() < (int64_t)get_current_epoch_millis())
+            if (meta.GetTTL() > 0 && meta.GetTTL() < get_current_epoch_millis())
             {
                 if (GetConf().master_host.empty() || !GetConf().slave_readonly)
                 {
@@ -1173,18 +1187,7 @@ OP_NAMESPACE_BEGIN
                     }
                 }
                 meta.Clear();
-                if(NULL != expired)
-                {
-                	*expired = true;
-                }
                 return true;
-            }
-            else
-            {
-                if(NULL != expired)
-                {
-                	*expired = false;
-                }
             }
         }
         return true;
@@ -1279,7 +1282,7 @@ OP_NAMESPACE_BEGIN
             {
                 if (!client->IsBlocking() && !client->IsSubscribed())
                 {
-                    if ((int64_t)now - client->client->last_interaction_ustime >= GetConf().tcp_keepalive * 1000 * 1000)
+                    if (now - client->client->last_interaction_ustime >= GetConf().tcp_keepalive * 1000 * 1000)
                     {
                         //timeout;
                         to_close.push_back(client);
@@ -1300,7 +1303,7 @@ OP_NAMESPACE_BEGIN
             }
             if (NULL != client && NULL != client->client && NULL != client->client->client)
             {
-                if (client->client->resume_ustime > 0 && (int64_t)now <= client->client->resume_ustime)
+                if (client->client->resume_ustime > 0 && now <= client->client->resume_ustime)
                 {
                     client->client->client->AttachFD();
                     client->client->resume_ustime = -1;
@@ -1372,17 +1375,8 @@ OP_NAMESPACE_BEGIN
             OpenWriteLatchByWriteCaller();
         }
         atomic_add_uint32(&m_db_caller_num, 1);
-
         int ret = (this->*(setting.handler))(ctx, args);
         atomic_sub_uint32(&m_db_caller_num, 1);
-        if(!ctx.post_cmd_func.empty())
-        {
-            for(size_t i = 0; i < ctx.post_cmd_func.size(); i++)
-            {
-                ctx.post_cmd_func[i].func(ctx.post_cmd_func[i].data);
-            }
-            ctx.post_cmd_func.clear();
-        }
         if (!ctx.flags.lua)
         {
             uint64 stop_time = get_current_epoch_micros();
@@ -1551,7 +1545,7 @@ OP_NAMESPACE_BEGIN
             }
         }
         ret = DoCall(ctx, setting, args);
-        WakeClientsBlockingOnKeys(ctx);
+        WakeClientsBlockingOnList(ctx);
         return ret;
     }
 

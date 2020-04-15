@@ -34,13 +34,13 @@
 CXX=g++
 CC=gcc
 
-ARDB_VERSION=0.10.0
+ARDB_VERSION=0.9.6
 
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 
 LIB_PATH=$(PWD)/../deps
 
-JEMALLOC_VER=5.2.1
+JEMALLOC_VER=5.0.1
 JEMALLOC_PATH=${LIB_PATH}/jemalloc-${JEMALLOC_VER}
 JEMALLOC_FILE=${JEMALLOC_PATH}.tar.bz2
 JEMALLOC_REMOTE_FILE=https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VER}/jemalloc-${JEMALLOC_VER}.tar.bz2
@@ -52,7 +52,7 @@ SNAPPY_FILE=${SNAPPY_PATH}.tar.gz
 SNAPPY_REMOTE_FILE=https://github.com/google/snappy/releases/download/${SNAPPY_VER}/snappy-${SNAPPY_VER}.tar.gz
 SNAPPY_LIBA=${SNAPPY_PATH}/.libs/libsnappy.a
 
-ROCKSDB_VER=6.5.2
+ROCKSDB_VER=5.12.2
 ROCKSDB_PATH=${LIB_PATH}/rocksdb-${ROCKSDB_VER}
 ROCKSDB_REMOTE_FILE=https://github.com/facebook/rocksdb/archive/v${ROCKSDB_VER}.tar.gz
 ROCKSDB_FILE=${ROCKSDB_PATH}.tar.gz
@@ -77,11 +77,11 @@ FORESTDB_REMOTE_FILE=https://github.com/couchbase/forestdb/archive/v1.2.tar.gz
 FORESTDB_SO=${FORESTDB_PATH}/build/libforestdb.so
 FORESTDB_LIBA=${FORESTDB_PATH}/build/libforestdb.a
 
-WIREDTIGER_VER=3.0.0
+WIREDTIGER_VER=2.9.3
 WIREDTIGER_PATH=${LIB_PATH}/wiredtiger-${WIREDTIGER_VER}
 WIREDTIGER_FILE=${WIREDTIGER_PATH}.tar.bz2
 WIREDTIGER_REMOTE_FILE=https://github.com/wiredtiger/wiredtiger/releases/download/${WIREDTIGER_VER}/wiredtiger-${WIREDTIGER_VER}.tar.bz2
-WIREDTIGER_LIBA=${WIREDTIGER_PATH}/.libs/libwiredtiger_static.a
+WIREDTIGER_LIBA=${WIREDTIGER_PATH}/.libs/libwiredtiger.a
 
 PERCONAFT_VER=PerconaFT-master
 PERCONAFT_PATH=${LIB_PATH}/${PERCONAFT_VER}
@@ -117,7 +117,7 @@ CJSON_LIBA=${CJSON_PATH}/libcjson.a
 OPTIMIZATION?=-O2
 OPT=$(OPTIMIZATION)
 
-CXXFLAGS=-Wall -g ${OPT}  -fPIC -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -DARDB_VERSION='"${ARDB_VERSION}"'
+CXXFLAGS=-Wall -g ${OPT} -fPIC -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -DARDB_VERSION='"${ARDB_VERSION}"'
 CCFLAGS=-Wall -std=gnu99 ${OPT} -fPIC -pedantic -g -D__STDC_FORMAT_MACROS -DARDB_VERSION='"${ARDB_VERSION}"'
 LDFLAGS=-g
 
@@ -128,25 +128,6 @@ LUA_CFLAGS+= $(OPT) -Wall -DLUA_ANSI $(CCFLAGS)
 LUA_LDFLAGS+= $(LDFLAGS)
 
 INCS=-I./ -I./common -I${LIB_PATH}/cpp-btree -I${LUA_PATH}/src -I${SNAPPY_PATH} -I${SPARSEHASH_PATH}/src
-
-ARDB_CC=$(QUIET_CC)$(CC) $(CCFLAGS)
-ARDB_CXX=$(QUIET_CXX)$(CXX) $(CXXFLAGS)
-ARDB_LD=$(QUIET_LINK)$(CXX) $(LDFLAGS)
-ARDB_AR=$(QUIET_LINK) ar rcs
-
-CCCOLOR="\033[34m"
-LINKCOLOR="\033[34;1m"
-SRCCOLOR="\033[33m"
-BINCOLOR="\033[37;1m"
-MAKECOLOR="\033[32;1m"
-ENDCOLOR="\033[0m"
-
-ifndef V
-QUIET_CC = @printf '    %b %b\n' $(CCCOLOR)CC$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
-QUIET_CXX = @printf '    %b %b\n' $(CCCOLOR)CXX$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
-QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
-QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
-endif
 
 
 ifeq ($(MALLOC),libc)
@@ -166,7 +147,6 @@ ifeq ($(uname_S),Linux)
 	CXXFLAGS+=-DCORO_ASM
 	CCFLAGS+=-DCORO_ASM
 	LIBS+=-lrt
-	CXXFLAGS+=-Werror
 else
 	MALLOC=libc
 	CXXFLAGS+=-DCORO_UCONTEXT -D_XOPEN_SOURCE
@@ -174,10 +154,10 @@ else
 endif
 
 %.o : %.cpp
-	${ARDB_CXX} -c ${INCS} $< -o $@
+	${CXX} -c ${CXXFLAGS} ${INCS} $< -o $@
 
 %.o : %.c
-	${ARDB_CC} -c ${INCS} $< -o $@
+	${CC} -c ${CCFLAGS} ${INCS} $< -o $@
 
 
 COMMON_VPATH=common/channel common/channel/socket common/channel/fifo common/channel/codec common/channel/timer common/channel/signal \
@@ -195,7 +175,7 @@ DB_CPPFILES := $(foreach dir, $(DB_VPATH), $(wildcard $(dir)/*.cpp))
 DB_CFILES := $(foreach dir, $(DB_VPATH), $(wildcard $(dir)/*.c))
 DB_OBJECTS := $(patsubst %.cpp, %.o, $(DB_CPPFILES)) $(patsubst %.c, %.o, $(DB_CFILES))
 
-CORE_OBJECTS :=  config.o cron.o logger.o network.o types.o statistics.o background.o\
+CORE_OBJECTS :=  config.o cron.o logger.o network.o types.o statistics.o\
                 $(COMMON_OBJECTS)  $(COMMAND_OBJECTS) $(DB_OBJECTS)
 
 TESTOBJ := ../test/test_main.o
@@ -287,23 +267,23 @@ all: ${PREBUILD}  test server tools
 $(STORAGE_ENGINE_OBJ): $(STORAGE_ENGINE)
 
 $(DIST_LIB): $(STORAGE_ENGINE_OBJ) $(CORE_OBJECTS)
-	${ARDB_CXX} -shared -o $@ $^
+	${CXX} -shared -o $@ $^
 
 $(DIST_LIBA):$(STORAGE_ENGINE_OBJ) $(CORE_OBJECTS)
-	$(ARDB_AR) $@ $^
+	ar rcs $@ $^
 
 lib: $(DEP_LIBS) lua snappy sparsehash $(storage_engine) $(DIST_LIBA)
 
 server: lib $(CORE_OBJECTS) ${SERVEROBJ}
-	${ARDB_LD} -o ardb-server $(SERVEROBJ)  $(CORE_OBJECTS) ${STORAGE_ENGINE_OBJ} $(LIBS)
+	${CXX} -o ardb-server $(SERVEROBJ)  $(CORE_OBJECTS) ${STORAGE_ENGINE_OBJ} $(LIBS)
 
 test: lib ${TESTOBJ} $(CORE_OBJECTS)
-	${ARDB_LD} -o ardb-test ${STORAGE_ENGINE_OBJ} ${TESTOBJ} $(CORE_OBJECTS) $(LIBS)
+	${CXX} -o ardb-test ${STORAGE_ENGINE_OBJ} ${TESTOBJ} $(CORE_OBJECTS) $(LIBS)
 
 tools: repair
 
 repair: lib ${REPAIR_TOOL_OBJ}
-	${ARDB_LD} -o ardb-repair ${REPAIR_TOOL_OBJ} $(DIST_LIBA) $(LIBS)
+	${CXX} -o ardb-repair ${REPAIR_TOOL_OBJ} $(DIST_LIBA) $(LIBS)
 
 .PHONY: jemalloc
 jemalloc: $(JEMALLOC_LIBA)
@@ -393,7 +373,7 @@ ${LEVELDB_FILE}:
 rocksdb: $(ROCKSDB_LIBA) rocksdb_flags
 
 .PHONY: rocksdb_flags
-rocksdb_flags:$(ROCKSDB_LIBA)
+rocksdb_flags:
 	$(eval ROCKSDB_LDFLAGS=$(shell grep PLATFORM_LDFLAGS $(ROCKSDB_PATH)/make_config.mk | cut -d '=' -f2 | sed 's/\-lsnappy//' | sed 's/\-lrt//' | sed 's/\-lpthread//'))
 	$(eval LIBS+=$(ROCKSDB_LDFLAGS))
 
@@ -525,7 +505,7 @@ $(SPARSEHASH_CONFIG):
 
 
 clean_db_obj:
-	rm -f db/engine_factory.o
+	rm -f db/db.o
 
 clean_test:
 	rm -f ${TESTOBJ};rm -f ardb-test

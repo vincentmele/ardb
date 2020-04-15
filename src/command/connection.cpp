@@ -37,15 +37,7 @@ OP_NAMESPACE_BEGIN
     }
     int Ardb::Ping(Context& ctx, RedisCommandFrame& cmd)
     {
-    	if(cmd.GetArguments().size() == 0)
-    	{
-            ctx.GetReply().SetStatusCode(STATUS_PONG);
-    	}
-    	else
-    	{
-            ctx.GetReply().SetStatusString(cmd.GetArguments()[0]);
-    	}
-
+        ctx.GetReply().SetStatusCode(STATUS_PONG);
         return 0;
     }
     int Ardb::Echo(Context& ctx, RedisCommandFrame& cmd)

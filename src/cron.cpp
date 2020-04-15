@@ -77,7 +77,6 @@ OP_NAMESPACE_BEGIN
                  * just let storage engine routine every 1s to do sth.
                  */
                 g_engine->Routine();
-                g_db->GC();
             }
     };
 

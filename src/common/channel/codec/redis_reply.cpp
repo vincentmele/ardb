@@ -29,19 +29,11 @@
 
 #include "redis_reply.hpp"
 #include "db/engine.hpp"
-#include "util/atomic.hpp"
 
 namespace ardb
 {
     namespace codec
     {
-        static volatile uint64_t g_reply_counter = 0;
-
-        uint64_t living_reply_count()
-        {
-        	return g_reply_counter;
-        }
-
         RedisReplyPool::RedisReplyPool(uint32 size) :
                 m_max_size(size), m_cursor(0)
         {
@@ -99,16 +91,14 @@ namespace ardb
         {
             if (type == REDIS_REPLY_DOUBLE)
             {
-                double* vv = (double*) (&integer);
-                return *vv;
+                return *(double*) (&integer);
             }
             return 0;
         }
         void RedisReply::SetDouble(double v)
         {
             type = REDIS_REPLY_DOUBLE;
-            double* vv = (double*) (&integer);
-            *vv = v;
+            *(double*) (&integer) = v;
         }
 
         RedisReply& RedisReply::AddMember(bool tail)
@@ -142,7 +132,7 @@ namespace ardb
             Clear();
             type = REDIS_REPLY_ARRAY;
             integer = num;
-            for (int64_t i = 0; num > 0 && i < num; i++)
+            for (size_t i = 0; num > 0 && i < num; i++)
             {
                 AddMember();
             }
@@ -163,7 +153,7 @@ namespace ardb
         {
             if (NULL == pool && NULL != elements)
             {
-                for (size_t i = 0; i < elements->size(); i++)
+                for (int i = 0; i < elements->size(); i++)
                 {
                     DELETE(elements->at(i));
                 }
@@ -189,30 +179,9 @@ namespace ardb
             }
             return str;
         }
-        RedisReply::RedisReply()
-                : type(REDIS_REPLY_NIL), integer(0), elements(NULL), pool(NULL)
-        {
-        	atomic_add_uint64(&g_reply_counter, 1);
-        }
-        RedisReply::RedisReply(uint64 v)
-                : type(REDIS_REPLY_INTEGER), integer(v), elements(NULL), pool(NULL)
-        {
-        	atomic_add_uint64(&g_reply_counter, 1);
-        }
-        RedisReply::RedisReply(double v)
-                : type(REDIS_REPLY_DOUBLE), integer(0), elements(NULL), pool(NULL)
-        {
-        	atomic_add_uint64(&g_reply_counter, 1);
-        }
-        RedisReply::RedisReply(const std::string& v)
-                : type(REDIS_REPLY_STRING), str(v), integer(0), elements(NULL), pool(NULL)
-        {
-        	atomic_add_uint64(&g_reply_counter, 1);
-        }
         RedisReply::~RedisReply()
         {
             Clear();
-            atomic_sub_uint64(&g_reply_counter, 1);
         }
 
         void clone_redis_reply(RedisReply& src, RedisReply& dst)

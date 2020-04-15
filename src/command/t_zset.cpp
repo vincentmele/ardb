@@ -52,15 +52,20 @@ OP_NAMESPACE_BEGIN
         int processed = 0; /* Number of elements processed, may remain zero with
          options like XX. */
         size_t scoreidx = 1;
-        //int err = 0;
+        int err = 0;
         while (scoreidx < cmd.GetArguments().size())
         {
             const char* opt = cmd.GetArguments()[scoreidx].c_str();
-            if (!strcasecmp(opt, "nx")) flags |= ZADD_NX;
-            else if (!strcasecmp(opt, "xx")) flags |= ZADD_XX;
-            else if (!strcasecmp(opt, "ch")) flags |= ZADD_CH;
-            else if (!strcasecmp(opt, "incr")) flags |= ZADD_INCR;
-            else break;
+            if (!strcasecmp(opt, "nx"))
+                flags |= ZADD_NX;
+            else if (!strcasecmp(opt, "xx"))
+                flags |= ZADD_XX;
+            else if (!strcasecmp(opt, "ch"))
+                flags |= ZADD_CH;
+            else if (!strcasecmp(opt, "incr"))
+                flags |= ZADD_INCR;
+            else
+                break;
             scoreidx++;
         }
         /* Turn options into simple to check vars. */
@@ -98,118 +103,111 @@ OP_NAMESPACE_BEGIN
             }
             scores.push_back(score);
         }
-        const std::string& keystr = cmd.GetArguments()[0];
-        KeyObject key(ctx.ns, KEY_META, keystr);
+        KeyObject key(ctx.ns, KEY_META, cmd.GetArguments()[0]);
         ValueObject meta;
+        KeyLockGuard guard(ctx, key);
+        if (!CheckMeta(ctx, key, KEY_ZSET, meta))
         {
-            KeyLockGuard guard(ctx, key);
-            if (!CheckMeta(ctx, key, KEY_ZSET, meta))
+            return 0;
+        }
+
+        if (meta.GetType() == 0)
+        {
+            if (xx)
             {
                 return 0;
             }
-
-            if (meta.GetType() == 0)
+            else
             {
-                if (xx)
-                {
-                    return 0;
-                }
-                else
-                {
-                    meta.SetType(KEY_ZSET);
-                    meta.SetObjectLen(0);
-                }
+                meta.SetType(KEY_ZSET);
+                meta.SetObjectLen(0);
             }
-            double score = 0;
+        }
+        double score = 0;
+        {
+            WriteBatchGuard batch(ctx, m_engine);
+            for (size_t i = 0; i < elements; i++)
             {
-                WriteBatchGuard batch(ctx, m_engine);
-                for (size_t i = 0; i < elements; i++)
+                KeyObject ele(ctx.ns, KEY_ZSET_SCORE, cmd.GetArguments()[0]);
+                ele.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
+                score = scores[i];
+                double current_score = 0;
+                ValueObject ele_value;
+                if (0 == m_engine->Get(ctx, ele, ele_value))
                 {
-                    KeyObject ele(ctx.ns, KEY_ZSET_SCORE, cmd.GetArguments()[0]);
-                    ele.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
-                    score = scores[i];
-                    double current_score = 0;
-                    ValueObject ele_value;
-                    if (0 == m_engine->Get(ctx, ele, ele_value))
+                    if (nx)
                     {
-                        if (nx)
+                        continue;
+                    }
+                    current_score = ele_value.GetZSetScore();
+                    if (incr)
+                    {
+                        score += current_score;
+                        if (std::isnan(score))
                         {
-                            continue;
+                            batch.MarkFailed(ERR_SCORE_NAN);
+                            break;
                         }
-                        current_score = ele_value.GetZSetScore();
-                        if (incr)
-                        {
-                            score += current_score;
-                            if (std::isnan(score))
-                            {
-                                batch.MarkFailed(ERR_SCORE_NAN);
-                                break;
-                            }
-                        }
-                        processed++;
-                        if (score != current_score)
-                        {
-                            KeyObject old_sort_key(ctx.ns, KEY_ZSET_SORT, cmd.GetArguments()[0]);
-                            old_sort_key.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
-                            old_sort_key.SetZSetScore(current_score);
-                            RemoveKey(ctx, old_sort_key);
-                            updated++;
-                        }
-                        else
-                        {
-                            continue;
-                        }
+                    }
+                    processed++;
+                    if (score != current_score)
+                    {
+                        KeyObject old_sort_key(ctx.ns, KEY_ZSET_SORT, cmd.GetArguments()[0]);
+                        old_sort_key.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
+                        old_sort_key.SetZSetScore(current_score);
+                        RemoveKey(ctx, old_sort_key);
+                        updated++;
                     }
                     else
                     {
-                        if (xx)
-                        {
-                            continue;
-                        }
-                        added++;
-                        processed++;
+                        continue;
                     }
-                    KeyObject new_sort_key(ctx.ns, KEY_ZSET_SORT, cmd.GetArguments()[0]);
-                    new_sort_key.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
-                    new_sort_key.SetZSetScore(score);
-                    ValueObject empty;
-                    empty.SetType(KEY_ZSET_SORT);
-                    SetKeyValue(ctx, new_sort_key, empty);
-                    ele_value.SetType(KEY_ZSET_SCORE);
-                    ele_value.SetZSetScore(score);
-                    SetKeyValue(ctx, ele, ele_value);
-                    meta.SetMinMaxData(new_sort_key.GetZSetMember());
                 }
-                meta.SetObjectLen(meta.GetObjectLen() + added);
-                SetKeyValue(ctx, key, meta);
+                else
+                {
+                    if (xx)
+                    {
+                        continue;
+                    }
+                    added++;
+                    processed++;
+                }
+                KeyObject new_sort_key(ctx.ns, KEY_ZSET_SORT, cmd.GetArguments()[0]);
+                new_sort_key.SetZSetMember(cmd.GetArguments()[scoreidx + i * 2 + 1]);
+                new_sort_key.SetZSetScore(score);
+                ValueObject empty;
+                empty.SetType(KEY_ZSET_SORT);
+                SetKeyValue(ctx, new_sort_key, empty);
+                ele_value.SetType(KEY_ZSET_SCORE);
+                ele_value.SetZSetScore(score);
+                SetKeyValue(ctx, ele, ele_value);
+                meta.SetMinMaxData(new_sort_key.GetZSetMember());
             }
+            meta.SetObjectLen(meta.GetObjectLen() + added);
+            SetKeyValue(ctx, key, meta);
+        }
 
-            if (ctx.transc_err != 0)
+        if (ctx.transc_err != 0)
+        {
+            reply.SetErrCode(ctx.transc_err);
+        }
+        else
+        {
+            if (incr)
             {
-                reply.SetErrCode(ctx.transc_err);
+                if (processed)
+                {
+                    reply.SetDouble(score);
+                }
+                else
+                {
+                    reply.Clear();
+                }
             }
             else
             {
-                if (incr)
-                {
-                    if (processed)
-                    {
-                        reply.SetDouble(score);
-                    }
-                    else
-                    {
-                        reply.Clear();
-                    }
-                }
-                else
-                {
-                    reply.SetInteger(ch ? added + updated : added);
-                }
+                reply.SetInteger(ch ? added + updated : added);
             }
-        }
-        if (meta.GetObjectLen() > 0)
-        {
-            SignalKeyAsReady(ctx, keystr);
         }
         return 0;
     }
@@ -267,9 +265,12 @@ OP_NAMESPACE_BEGIN
         {
             return 0;
         }
-        if (start < 0) start = meta.GetObjectLen() + start;
-        if (end < 0) end = meta.GetObjectLen() + end;
-        if (start < 0) start = 0;
+        if (start < 0)
+            start = meta.GetObjectLen() + start;
+        if (end < 0)
+            end = meta.GetObjectLen() + end;
+        if (start < 0)
+            start = 0;
 
         /* Invariant: start >= 0, so this test will be true when end < 0.
          * The range is empty when start > end or start >= length. */
@@ -277,9 +278,10 @@ OP_NAMESPACE_BEGIN
         {
             return 0;
         }
-        if (end >= meta.GetObjectLen()) end = meta.GetObjectLen() - 1;
+        if (end >= meta.GetObjectLen())
+            end = meta.GetObjectLen() - 1;
         KeyObject sort_key(ctx.ns, KEY_ZSET_SORT, key.GetKey());
-        if (reverse)
+        if(reverse)
         {
             ctx.flags.iterate_total_order = 1;
         }
@@ -292,8 +294,7 @@ OP_NAMESPACE_BEGIN
         while (iter->Valid())
         {
             KeyObject& field = iter->Key();
-            if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != key.GetNameSpace()
-                    || field.GetKey() != key.GetKey())
+            if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != key.GetNameSpace() || field.GetKey() != key.GetKey())
             {
                 break;
             }
@@ -376,7 +377,7 @@ OP_NAMESPACE_BEGIN
         if (reverse)
         {
             range_parse_success = range.Parse(cmd.GetArguments()[2], cmd.GetArguments()[1]);
-            if (range.min == range.max)
+            if(range.min == range.max)
             {
                 range.max.SetFloat64(range.max.GetFloat64() + DBL_EPSILON);
             }
@@ -404,8 +405,7 @@ OP_NAMESPACE_BEGIN
                 else if (!strcasecmp(cmd.GetArguments()[i].c_str(), "limit") && (i + 2) < cmd.GetArguments().size())
                 {
                     with_limit = true;
-                    if (!string_toint64(cmd.GetArguments()[i + 1], limit_offset)
-                            || !string_toint64(cmd.GetArguments()[i + 2], limit_count))
+                    if (!string_toint64(cmd.GetArguments()[i + 1], limit_offset) || !string_toint64(cmd.GetArguments()[i + 2], limit_count))
                     {
                         reply.SetErrCode(ERR_INVALID_INTEGER_ARGS);
                         return 0;
@@ -436,7 +436,7 @@ OP_NAMESPACE_BEGIN
         }
         KeyObject sort_key(ctx.ns, KEY_ZSET_SORT, key.GetKey());
         sort_key.SetZSetScore(reverse ? range.max.GetFloat64() : range.min.GetFloat64());
-        if (reverse)
+        if(reverse)
         {
             ctx.flags.iterate_total_order = 1;
         }
@@ -451,10 +451,9 @@ OP_NAMESPACE_BEGIN
         while (iter->Valid())
         {
             KeyObject& field = iter->Key();
-            if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != key.GetNameSpace()
-                    || field.GetKey() != key.GetKey())
+            if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != key.GetNameSpace() || field.GetKey() != key.GetKey())
             {
-                if (first_iter && reverse)
+                if(first_iter && reverse)
                 {
                     iter->Prev();
                     first_iter = false;
@@ -462,7 +461,7 @@ OP_NAMESPACE_BEGIN
                 }
                 break;
             }
-            first_iter = false;
+            first_iter  = false;
             int inrange = range.InRange(field.GetZSetScore());
             if (reverse)
             {
@@ -568,7 +567,7 @@ OP_NAMESPACE_BEGIN
         ZScore(ctx, cmd);
         if (reply.type == REDIS_REPLY_DOUBLE)
         {
-            //double score = reply.GetDouble();
+            double score = reply.GetDouble();
             Data member;
             member.SetString(cmd.GetArguments()[1], false);
             KeyObject sort_key(ctx.ns, KEY_ZSET_SORT, cmd.GetArguments()[0]);
@@ -586,8 +585,7 @@ OP_NAMESPACE_BEGIN
             while (iter->Valid())
             {
                 KeyObject& field = iter->Key();
-                if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != sort_key.GetNameSpace()
-                        || field.GetKey() != sort_key.GetKey())
+                if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != sort_key.GetNameSpace() || field.GetKey() != sort_key.GetKey())
                 {
                     break;
                 }
@@ -737,8 +735,7 @@ OP_NAMESPACE_BEGIN
                 if (!strcasecmp(cmd.GetArguments()[i].c_str(), "limit") && (i + 2) < cmd.GetArguments().size())
                 {
                     with_limit = true;
-                    if (!string_toint64(cmd.GetArguments()[i + 1], limit_offset)
-                            || !string_toint64(cmd.GetArguments()[i + 2], limit_count))
+                    if (!string_toint64(cmd.GetArguments()[i + 1], limit_offset) || !string_toint64(cmd.GetArguments()[i + 2], limit_count))
                     {
                         reply.SetErrCode(ERR_INVALID_INTEGER_ARGS);
                         return 0;
@@ -769,7 +766,7 @@ OP_NAMESPACE_BEGIN
         }
         KeyObject sort_key(ctx.ns, KEY_ZSET_SCORE, key.GetKey());
         sort_key.SetZSetMember(reverse ? range.max : range.min);
-        if (reverse)
+        if(reverse)
         {
             ctx.flags.iterate_total_order = 1;
         }
@@ -783,8 +780,7 @@ OP_NAMESPACE_BEGIN
         while (iter->Valid())
         {
             KeyObject& field = iter->Key();
-            if (field.GetType() != KEY_ZSET_SCORE || field.GetNameSpace() != key.GetNameSpace()
-                    || field.GetKey() != key.GetKey())
+            if (field.GetType() != KEY_ZSET_SCORE || field.GetNameSpace() != key.GetNameSpace() || field.GetKey() != key.GetKey())
             {
                 break;
             }
@@ -887,7 +883,8 @@ OP_NAMESPACE_BEGIN
             /* The result of adding two doubles is NaN when one variable
              * is +inf and the other is -inf. When these numbers are added,
              * we maintain the convention of the result being 0.0. */
-            if (std::isnan(*target)) *target = 0.0;
+            if (std::isnan(*target))
+                *target = 0.0;
         }
         else if (aggregate == REDIS_AGGR_MIN)
         {
@@ -931,7 +928,7 @@ OP_NAMESPACE_BEGIN
             int remaining = cmd.GetArguments().size() - arg_cursor;
             while (remaining)
             {
-                if (remaining >= (int)(setnum + 1) && !strcasecmp(cmd.GetArguments()[arg_cursor].c_str(), "weights"))
+                if (remaining >= (setnum + 1) && !strcasecmp(cmd.GetArguments()[arg_cursor].c_str(), "weights"))
                 {
                     arg_cursor++;
                     remaining--;
@@ -1026,7 +1023,7 @@ OP_NAMESPACE_BEGIN
                     break;
                 }
             }
-            if (min.encoding != max.encoding)
+            if(min.encoding != max.encoding)
             {
                 use_minmax = false;
                 empty_inter_result = false;
@@ -1034,7 +1031,7 @@ OP_NAMESPACE_BEGIN
             for (size_t i = 0; !empty_inter_result && i < setnum; i++)
             {
                 KeyObject start(ctx.ns, (KeyType) element_type((KeyType) vs[i].GetType()), keys[i].GetKey());
-                if (use_minmax)
+                if(use_minmax)
                 {
                     start.SetSetMember(min);
                 }
@@ -1045,20 +1042,18 @@ OP_NAMESPACE_BEGIN
                 while (iters[i]->Valid())
                 {
                     KeyObject& k = iters[i]->Key(true);
-                    if (k.GetType() != start.GetType() || k.GetKey() != keys[i].GetKey()
-                            || k.GetNameSpace() != keys[i].GetNameSpace())
+                    if (k.GetType() != start.GetType() || k.GetKey() != keys[i].GetKey() || k.GetNameSpace() != keys[i].GetNameSpace())
                     {
                         break;
                     }
                     Data element = k.GetElement(0);
-                    if (use_minmax)
+                    if(use_minmax)
                     {
-                        if (k.GetSetMember() > max)
+                        if(k.GetSetMember() > max)
                         {
                             break;
                         }
-                    }
-                    else
+                    }else
                     {
                         element.ToMutableStr();
                     }
@@ -1110,8 +1105,7 @@ OP_NAMESPACE_BEGIN
                 while (NULL != iter && iter->Valid())
                 {
                     KeyObject& k = iter->Key(true);
-                    if (k.GetType() != ele.GetType() || k.GetKey() != keys[i].GetKey()
-                            || k.GetNameSpace() != keys[i].GetNameSpace())
+                    if (k.GetType() != ele.GetType() || k.GetKey() != keys[i].GetKey() || k.GetNameSpace() != keys[i].GetNameSpace())
                     {
                         break;
                     }
@@ -1122,8 +1116,7 @@ OP_NAMESPACE_BEGIN
                     }
                     score = weights[i] * score;
                     DataScoreMap& result_map = inter_union_result[result_cursor];
-                    std::pair<DataScoreMap::iterator, bool> ret = result_map.insert(
-                            DataScoreMap::value_type(k.GetElement(0), score));
+                    std::pair<DataScoreMap::iterator, bool> ret = result_map.insert(DataScoreMap::value_type(k.GetElement(0), score));
                     if (!ret.second)
                     {
                         zunionInterAggregate(&score, ret.first->second, aggregate);
@@ -1177,183 +1170,6 @@ OP_NAMESPACE_BEGIN
     int Ardb::ZScan(Context& ctx, RedisCommandFrame& cmd)
     {
         return Scan(ctx, cmd);
-    }
-
-    int Ardb::ZPop(Context& ctx, RedisReply& reply, const std::string& keystr, ValueObject* meta, int64_t count,
-            bool reverse, bool emitkey, bool lock)
-    {
-        //RedisReply& reply = ctx.GetReply();
-        reply.ReserveMember(0);
-        KeyObject key(ctx.ns, KEY_META, keystr);
-        ValueObject fmeta;
-        KeyLockGuard guard(ctx, key, lock);
-        if (NULL == meta)
-        {
-            if (!CheckMeta(ctx, key, KEY_ZSET, fmeta))
-            {
-                return 0;
-            }
-            if (fmeta.GetType() == 0)
-            {
-                return 0;
-            }
-            meta = &fmeta;
-        }
-        if (emitkey)
-        {
-            reply.AddMember().SetString(keystr);
-        }
-        ctx.flags.iterate_total_order = 1;
-        KeyObject sort_key(ctx.ns, KEY_ZSET_SORT, keystr);
-        sort_key.SetZSetScore(reverse ? DBL_MAX : -DBL_MAX);
-        Iterator* iter = m_engine->Find(ctx, sort_key);
-        if (reverse && !iter->Valid())
-        {
-            iter->JumpToLast();
-        }
-        bool first_iter = true;
-        WriteBatchGuard batch(ctx, m_engine);
-        while (iter->Valid() && count > 0)
-        {
-            KeyObject& field = iter->Key();
-            if (field.GetType() != KEY_ZSET_SORT || field.GetNameSpace() != sort_key.GetNameSpace()
-                    || field.GetKey() != sort_key.GetKey())
-            {
-                if (first_iter && reverse)
-                {
-                    iter->Prev();
-                    first_iter = false;
-                    continue;
-                }
-                break;
-            }
-            first_iter = false;
-            count--;
-            RedisReply& r1 = reply.AddMember();
-            r1.SetDouble(field.GetZSetScore());
-            RedisReply& r2 = reply.AddMember();
-            r2.SetString(field.GetZSetMember());
-
-            KeyObject sk(ctx.ns, KEY_ZSET_SCORE, keystr);
-            sk.SetZSetMember(field.GetZSetMember());
-            m_engine->Del(ctx, sk);
-            iter->Del();
-            meta->SetObjectLen(meta->GetObjectLen() - 1);
-            if (reverse)
-            {
-                iter->Prev();
-            }
-            else
-            {
-                iter->Next();
-            }
-        }
-        DELETE(iter);
-        KeyObject mk(ctx.ns, KEY_META, keystr);
-        if (0 == meta->GetObjectLen())
-        {
-            m_engine->Del(ctx, mk);
-        }
-        else
-        {
-            m_engine->Put(ctx, mk, *meta);
-        }
-        return 0;
-    }
-
-    int Ardb::ZPopMin(Context& ctx, RedisCommandFrame& cmd)
-    {
-        int64_t count = 1;
-        if (cmd.GetArguments().size() > 1)
-        {
-            if (!string_toint64(cmd.GetArguments()[1], count))
-            {
-                ctx.GetReply().SetErrCode(ERR_INVALID_INTEGER_ARGS);
-                return 0;
-            }
-            if (count < 0) count = 1;
-        }
-        ZPop(ctx, ctx.GetReply(), cmd.GetArguments()[0], NULL, count, cmd.GetType() == REDIS_CMD_ZPOPMAX, false, true);
-        return 0;
-    }
-    int Ardb::ZPopMax(Context& ctx, RedisCommandFrame& cmd)
-    {
-        return ZPopMin(ctx, cmd);
-    }
-    int Ardb::BZPopMin(Context& ctx, RedisCommandFrame& cmd)
-    {
-        int64_t timeout = 1000;
-        if (!string_toint64(cmd.GetArguments()[cmd.GetArguments().size() - 1], timeout))
-        {
-            ctx.GetReply().SetErrCode(ERR_INVALID_INTEGER_ARGS);
-            return 0;
-        }
-        KeyObjectArray keys;
-        ValueObjectArray vs;
-        ErrCodeArray errs;
-        StringArray skeys;
-        for (size_t i = 0; i < cmd.GetArguments().size() - 1; i++)
-        {
-            KeyObject zkey(ctx.ns, KEY_META, cmd.GetArguments()[i]);
-            keys.push_back(zkey);
-            skeys.push_back(cmd.GetArguments()[i]);
-        }
-        {
-            KeysLockGuard guard(ctx, keys);
-            m_engine->MultiGet(ctx, keys, vs, errs);
-            for (size_t i = 0; i < keys.size(); i++)
-            {
-                if (!CheckMeta(ctx, keys[i], KEY_ZSET, vs[i], false))
-                {
-                    return 0;
-                }
-                if (vs[i].GetObjectLen() > 0)
-                {
-                    ZPop(ctx, ctx.GetReply(), skeys[i], NULL, 1, cmd.GetType() == REDIS_CMD_BZPOPMAX, true, false);
-                    RedisCommandFrame zpop;
-                    zpop.SetCommand(cmd.GetType() == REDIS_CMD_BZPOPMAX ? "zpopmax" : "zpopmin");
-                    zpop.SetType(cmd.GetType() == REDIS_CMD_BZPOPMAX ? REDIS_CMD_ZPOPMIN : REDIS_CMD_ZPOPMAX);
-                    zpop.GetMutableArguments().push_back(skeys[i]);
-                    ctx.RewriteClientCommand(zpop);
-                    return 0;
-                }
-            }
-            if (ctx.InTransaction())
-            {
-                ctx.GetReply().ReserveMember(-1);
-                return 0;
-            }
-        }
-
-        ctx.GetReply().type = 0;
-        AnyArray empty;
-        BlockForKeys(ctx, skeys, empty, KEY_ZSET, timeout * 1000);
-        //if (timeout < 0) count = 1;
-        return 0;
-    }
-    int Ardb::BZPopMax(Context& ctx, RedisCommandFrame& cmd)
-    {
-        return BZPopMin(ctx, cmd);
-    }
-    int Ardb::WakeClientsBlockingOnZSet(Context& ctx, const KeyPrefix& ready_key, Context& unblock_client)
-    {
-        RedisReply* r = NULL;
-        NEW(r, RedisReply);
-        Context tmpctx;
-        tmpctx.ns = ready_key.ns;
-        std::string kstr;
-        ready_key.key.ToString(kstr);
-        ZPop(tmpctx, *r, kstr, NULL, 1, unblock_client.last_cmdtype == REDIS_CMD_BZPOPMAX, true, false);
-        UnblockKeys(unblock_client, false, r);
-        if (GetConf().master_host.empty())
-        {
-            RedisCommandFrame zpop;
-            zpop.SetCommand(unblock_client.last_cmdtype == REDIS_CMD_BZPOPMAX ? "zpopmax" : "zpopmin");
-            zpop.SetType(unblock_client.last_cmdtype == REDIS_CMD_BZPOPMAX ? REDIS_CMD_ZPOPMIN : REDIS_CMD_ZPOPMAX);
-            zpop.GetMutableArguments().push_back(kstr);
-            FeedReplicationBacklog(ctx, ready_key.ns, zpop);
-        }
-        return 0;
     }
 
 OP_NAMESPACE_END

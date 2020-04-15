@@ -162,7 +162,7 @@ OP_NAMESPACE_BEGIN
 
     };
 
-    struct SlaveSyncContext;
+    class SlaveSyncContext;
     typedef TreeSet<SlaveSyncContext*>::Type SlaveSyncContextSet;
     typedef TreeSet<Snapshot*>::Type DataDumpFileSet;
     class Master: public ChannelUpstreamHandler<RedisCommandFrame>

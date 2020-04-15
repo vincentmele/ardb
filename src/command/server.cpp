@@ -59,7 +59,7 @@ namespace ardb
         if (cmd.GetArguments().size() == 1)
         {
             type = Snapshot::GetSnapshotTypeByName(cmd.GetArguments()[0]);
-            if (type == (SnapshotType)-1)
+            if (type == -1)
             {
                 reply.SetErrCode(ERR_INVALID_ARGS);
                 return 0;
@@ -106,7 +106,7 @@ namespace ardb
         if (cmd.GetArguments().size() == 1)
         {
             type = Snapshot::GetSnapshotTypeByName(cmd.GetArguments()[0]);
-            if (type == (SnapshotType)-1)
+            if (type == -1)
             {
                 reply.SetErrCode(ERR_INVALID_ARGS);
                 return 0;
@@ -226,8 +226,6 @@ namespace ardb
             char tmp[256];
             sprintf(tmp, "%" PRId64, filesize);
             info.append("used_disk_space:").append(tmp).append("\r\n");
-            info.append("living_iterator_num:").append(stringfromll(g_db_iterator_counter)).append("\r\n");
-            info.append("living_reply_num:").append(stringfromll(living_reply_count())).append("\r\n");
             std::string stats;
             m_engine->Stats(ctx, stats);
             info.append(stats).append("\r\n");
@@ -1122,7 +1120,7 @@ namespace ardb
         while (logbuf.Readable())
         {
             RedisCommandFrame msg;
-            //size_t rest = logbuf.ReadableBytes();
+            size_t rest = logbuf.ReadableBytes();
             if (!RedisCommandDecoder::Decode(NULL, logbuf, msg))
             {
                 break;
@@ -1185,7 +1183,7 @@ namespace ardb
             const int64_t max_replay_bytes = 1024 * 1024;
             while (true)
             {
-                if ((uint64_t)replay_ctx.offset < g_repl->GetReplLog().WALStartOffset() || (uint64_t)replay_ctx.offset > g_repl->GetReplLog().WALEndOffset())
+                if (replay_ctx.offset < g_repl->GetReplLog().WALStartOffset() || replay_ctx.offset > g_repl->GetReplLog().WALEndOffset())
                 {
                     ERROR_LOG("Failed to replay wal with sync_offset:%lld, wal_start_offset:%llu, wal_end_offset:%lld", replay_ctx.offset,
                             g_repl->GetReplLog().WALStartOffset(), g_repl->GetReplLog().WALEndOffset());
@@ -1200,7 +1198,7 @@ namespace ardb
                     INFO_LOG("%lld bytes replayed from wal log, %llu bytes left.", after_replayed_bytes,
                             g_repl->GetReplLog().WALEndOffset() - replay_ctx.offset);
                 }
-                if ((uint64_t)replay_ctx.offset == g_repl->GetReplLog().WALEndOffset())
+                if (replay_ctx.offset == g_repl->GetReplLog().WALEndOffset())
                 {
                     break;
                 }
